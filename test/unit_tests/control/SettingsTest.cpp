@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "control/settings/Settings.h"
+#include "util/PathUtil.h"
 
 TEST(SettingsTest, testLoadDoesNotThrowForNonExistingFilePath) {
     Settings settings{"non-existing-file-path"};
@@ -46,7 +47,15 @@ TEST(SettingsTest, testReadWrite) {
         settings.setFont(XojFont{"myfontname italic 34"});             // Font
         settings.latexSettings.editorFont = XojFont{"myfonttest 52"};  // Font
         settings.setPreloadPagesAfter(145);                            // unsigned int
-        settings.transactionEnd();                                     // calls save()
+        // State properties
+        settings.setLastSavePath("/tmp/test-save-path");
+        settings.setLastOpenPath("/tmp/test-open-path");
+        settings.setMainWndSize(1024, 768);
+        settings.setMainWndMaximized(true);
+        settings.setPresentationMode(true);
+        settings.setSidebarVisible(false);
+        settings.setToolbarVisible(false);
+        settings.transactionEnd();  // calls save() and saveState()
 
         Settings loaded(outPath);
         loaded.load();
@@ -75,7 +84,88 @@ TEST(SettingsTest, testReadWrite) {
         EXPECT_EQ(settings.getPreloadPagesAfter(), loaded.getPreloadPagesAfter());    // unsigned int
         EXPECT_EQ(settings.getPreloadPagesBefore(), loaded.getPreloadPagesBefore());  // unsigned int
 
+        // State properties
+        EXPECT_EQ(settings.getLastSavePath(), loaded.getLastSavePath());
+        EXPECT_EQ(settings.getLastOpenPath(), loaded.getLastOpenPath());
+        EXPECT_EQ(settings.getMainWndWidth(), loaded.getMainWndWidth());
+        EXPECT_EQ(settings.getMainWndHeight(), loaded.getMainWndHeight());
+        EXPECT_EQ(settings.isMainWndMaximized(), loaded.isMainWndMaximized());
+        EXPECT_EQ(settings.isPresentationMode(), loaded.isPresentationMode());
+        EXPECT_EQ(settings.isSidebarVisible(), loaded.isSidebarVisible());
+        EXPECT_EQ(settings.isToolbarVisible(), loaded.isToolbarVisible());
+
         fs::remove(outPath);
+        fs::remove(settings.getStateFile());
     };
     saveReloadTest(fs::temp_directory_path());
+}
+
+// Test that state file is created separately from settings file
+TEST(SettingsTest, testStateFileSeparation) {
+    const fs::path dir = fs::temp_directory_path();
+    const fs::path outPath = dir / "xournalpp-test-units_Settings_testState.xml";
+
+    if (fs::exists(outPath))
+        fs::remove(outPath);
+
+    Settings settings(outPath);
+    const fs::path statePath = settings.getStateFile();
+
+    if (fs::exists(statePath))
+        fs::remove(statePath);
+
+    settings.transactionStart();
+    settings.setLastSavePath("/tmp/separate-state-test");
+    settings.setMainWndSize(1920, 1080);
+    settings.setMenubarVisible(false);
+
+    // Layout configuration
+    settings.setShowPairedPages(true);
+    settings.setViewLayoutVert(true);
+    settings.setViewLayoutR2L(true);
+    settings.setViewLayoutB2T(true);
+    settings.setViewFixedRows(true);
+    settings.setViewColumns(2);
+    settings.setViewRows(3);
+
+    // Add tools data to settings to see if it gets migrated
+    SElement& s = settings.getCustomStateElement("tools");
+    s.setString("current", "pen");
+    SElement& pen = s.child("pen");
+    pen.setIntHex("color", 0xff0000);
+    pen.setString("size", "MEDIUM");
+
+    settings.transactionEnd();
+
+    // State file should exist
+    EXPECT_TRUE(fs::exists(statePath));
+
+    // Verify state file contains state properties
+    auto stateContent = Util::readString(statePath, false);
+    ASSERT_TRUE(stateContent.has_value());
+    EXPECT_NE(stateContent->find("lastSavePath"), std::string::npos);
+    EXPECT_NE(stateContent->find("mainWndWidth"), std::string::npos);
+    EXPECT_NE(stateContent->find("menubarVisible"), std::string::npos);
+    EXPECT_NE(stateContent->find("showPairedPages"), std::string::npos);
+    EXPECT_NE(stateContent->find("layoutVertical"), std::string::npos);
+    EXPECT_NE(stateContent->find("layoutRightToLeft"), std::string::npos);
+    EXPECT_NE(stateContent->find("layoutBottomToTop"), std::string::npos);
+    EXPECT_NE(stateContent->find("viewFixedRows"), std::string::npos);
+    EXPECT_NE(stateContent->find("numColumns"), std::string::npos);
+    EXPECT_NE(stateContent->find("numRows"), std::string::npos);
+    EXPECT_NE(stateContent->find("tools"), std::string::npos);
+    EXPECT_NE(stateContent->find("pen"), std::string::npos);
+    EXPECT_NE(stateContent->find("ff0000"), std::string::npos);
+
+    // Verify settings file does NOT contain state properties
+    auto settingsContent = Util::readString(outPath, false);
+    ASSERT_TRUE(settingsContent.has_value());
+    EXPECT_EQ(settingsContent->find("lastSavePath"), std::string::npos);
+    EXPECT_EQ(settingsContent->find("mainWndWidth"), std::string::npos);
+    EXPECT_EQ(settingsContent->find("showPairedPages"), std::string::npos);
+    EXPECT_EQ(settingsContent->find("layoutVertical"), std::string::npos);
+    EXPECT_EQ(settingsContent->find("tools"), std::string::npos);
+
+    fs::remove(outPath);
+    fs::remove(statePath);
 }

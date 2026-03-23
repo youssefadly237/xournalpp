@@ -284,6 +284,7 @@ mark_as_advanced(FORCE
 # Advanced development config
 set(DEV_TOOLBAR_CONFIG "toolbar.ini" CACHE STRING "Toolbar config file name")
 set(DEV_SETTINGS_XML_FILE "settings.xml" CACHE STRING "Settings file name")
+set(DEV_STATE_XML_FILE "state.xml" CACHE STRING "State file name")
 set(DEV_DEFAULT_PALETTE_FILE "xournal.gpl" CACHE STRING "Default Color Palette")
 set(DEV_PRINT_CONFIG_FILE "print-config.ini" CACHE STRING "Print config file name")
 set(DEV_METADATA_FILE "metadata.ini" CACHE STRING "Metadata file name")
@@ -293,7 +294,7 @@ set(DEV_FILE_FORMAT_VERSION 4 CACHE STRING "File format version" FORCE)
 option(DEV_ENABLE_GCOV "Build with gcov support" OFF) # Enabel gcov support – expanded in src/
 
 mark_as_advanced(FORCE
-        DEV_TOOLBAR_CONFIG DEV_SETTINGS_XML_FILE DEV_PRINT_CONFIG_FILE DEV_METADATA_FILE
+        DEV_TOOLBAR_CONFIG DEV_SETTINGS_XML_FILE DEV_STATE_XML_FILE DEV_PRINT_CONFIG_FILE DEV_METADATA_FILE
         DEV_ENABLE_GCOV DEV_CHECK_GTK3_COMPAT
         )
 

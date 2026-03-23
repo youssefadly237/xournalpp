@@ -114,9 +114,14 @@ public:
 
     void save();
 
+    bool loadState();
+    void saveState();
+
 private:
     void loadDefault();
     void parseItem(xmlDocPtr doc, xmlNodePtr cur);
+    void parseStateItem(xmlDocPtr doc, xmlNodePtr cur);
+    void migrateStateFromSettings();
 
     static xmlNodePtr savePropertyDouble(const gchar* key, double value, xmlNodePtr parent);
     static xmlNodePtr saveProperty(const gchar* key, int value, xmlNodePtr parent);
@@ -597,6 +602,7 @@ public:
 public:
     // Custom settings
     SElement& getCustomElement(const std::string& name);
+    SElement& getCustomStateElement(const std::string& name);
 
     /**
      * Call this after you have done all custom settings changes
@@ -616,6 +622,7 @@ public:
     LatexSettings latexSettings{};
 
     inline const fs::path& getSettingsFile() const { return filepath; }
+    inline const fs::path& getStateFile() const { return stateFilepath; }
 
 private:
     /**
@@ -623,11 +630,20 @@ private:
      */
     fs::path filepath;
 
-private:
+    /**
+     *  The state filepath
+     */
+    fs::path stateFilepath;
+
     /**
      * The settings tree
      */
     std::map<std::string, SElement> data;
+
+    /**
+     * The state tree
+     */
+    std::map<std::string, SElement> stateData;
 
     /**
      *  Use pen pressure to control stroke width?

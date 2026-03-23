@@ -2106,6 +2106,7 @@ void Control::quit(bool allowCancel) {
             this->scheduler->stop();  // Finish current task. Must be called to finish pending saves.
             this->closeDocument();    // Must be done after all jobs has finished (Segfault on save/export)
             settings->save();
+            settings->saveState();
             g_application_quit(G_APPLICATION(gtkApp));
         }
     };

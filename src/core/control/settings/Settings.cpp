@@ -21,15 +21,14 @@
 #include "gui/toolbarMenubar/model/ColorPalette.h"  // for Palette
 #include "model/FormatDefinitions.h"                // for FormatUnits, XOJ_...
 #include "util/Color.h"
-#include "util/PathUtil.h"  // for getConfigFile
-#include "util/Util.h"      // for PRECISION_FORMAT_...
-#include "util/i18n.h"      // for _
+#include "util/PathUtil.h"    // for getConfigFile, getStateSubfolder
+#include "util/Util.h"        // for PRECISION_FORMAT_...
+#include "util/i18n.h"        // for _
 #include "util/safe_casts.h"  // for as_unsigned
 #include "util/utf8_view.h"   // for utf8_view
 
 #include "ButtonConfig.h"  // for ButtonConfig
-#include "config-dev.h"    // for PALETTE_FILE
-#include "config-dev.h"
+#include "config-dev.h"    // for PALETTE_FILE, STATE_XML_FILE
 #include "filesystem.h"  // for path, exists
 
 
@@ -49,7 +48,10 @@ constexpr auto DEFAULT_TOOLBAR = "Portrait";
     com = xmlNewComment((const xmlChar*)(var)); \
     xmlAddPrevSibling(xmlNode, com);
 
-Settings::Settings(fs::path filepath): filepath(std::move(filepath)) { loadDefault(); }
+Settings::Settings(fs::path filepath):
+        filepath(std::move(filepath)), stateFilepath(Util::getStateSubfolder() / STATE_XML_FILE) {
+    loadDefault();
+}
 
 Settings::~Settings() = default;
 
@@ -278,6 +280,7 @@ auto Settings::loadViewMode(ViewModeId mode) -> bool {
     showToolbar = viewMode.showToolbar;
     showSidebar = viewMode.showSidebar;
     this->activeViewMode = mode;
+    saveState();
     return true;
 }
 
@@ -744,6 +747,243 @@ void Settings::parseItem(xmlDocPtr doc, xmlNodePtr cur) {
     xmlFree(value);
 }
 
+void Settings::parseStateItem(xmlDocPtr doc, xmlNodePtr cur) {
+    if (cur->type == XML_COMMENT_NODE) {
+        return;
+    }
+
+    if (xmlStrcmp(cur->name, reinterpret_cast<const xmlChar*>("property"))) {
+        g_warning("Settings::parseStateItem: Unknown XML node: %s\n", cur->name);
+        return;
+    }
+
+    xmlChar* name = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("name"));
+    if (name == nullptr) {
+        g_warning("Settings::parseStateItem:No name property!\n");
+        return;
+    }
+
+    if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("font")) == 0) {
+        xmlFree(name);
+        xmlChar* font = nullptr;
+        xmlChar* size = nullptr;
+
+        font = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("font"));
+        if (font) {
+            this->font.setName(reinterpret_cast<const char*>(font));
+            xmlFree(font);
+        }
+
+        size = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("size"));
+        if (size) {
+            double dSize = DEFAULT_FONT_SIZE;
+            if (sscanf(reinterpret_cast<const char*>(size), "%lf", &dSize) == 1) {
+                this->font.setSize(dSize);
+            }
+            xmlFree(size);
+        }
+        return;
+    }
+
+    xmlChar* value = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("value"));
+    if (value == nullptr) {
+        xmlFree(name);
+        g_warning("Settings::parseStateItem: No value property!\n");
+        return;
+    }
+
+    if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("lastSavePath")) == 0) {
+        this->lastSavePath = fs::path(xoj::util::utf8(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("lastOpenPath")) == 0) {
+        this->lastOpenPath = fs::path(xoj::util::utf8(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("lastImagePath")) == 0) {
+        this->lastImagePath = fs::path(xoj::util::utf8(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("mainWndWidth")) == 0) {
+        this->mainWndWidth = g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10);
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("mainWndHeight")) == 0) {
+        this->mainWndHeight = g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10);
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("maximized")) == 0) {
+        this->maximized = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("fullscreenActive")) == 0) {
+        this->fullscreenActive = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("showSidebar")) == 0) {
+        this->showSidebar = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("showToolbar")) == 0) {
+        this->showToolbar = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("menubarVisible")) == 0) {
+        this->menubarVisible = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("sidebarWidth")) == 0) {
+        this->sidebarWidth = std::max<int>(g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10), 50);
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("presentationMode")) == 0) {
+        this->presentationMode = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("numColumns")) == 0) {
+        this->numColumns = static_cast<int>(g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("numRows")) == 0) {
+        this->numRows = static_cast<int>(g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("viewFixedRows")) == 0) {
+        this->viewFixedRows = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("layoutVertical")) == 0) {
+        this->layoutVertical = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("layoutRightToLeft")) == 0) {
+        this->layoutRightToLeft = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("layoutBottomToTop")) == 0) {
+        this->layoutBottomToTop = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("showPairedPages")) == 0) {
+        this->showPairedPages = xmlStrcmp(value, reinterpret_cast<const xmlChar*>("true")) == 0;
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("selectedToolbar")) == 0) {
+        this->selectedToolbar = reinterpret_cast<const char*>(value);
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("activeViewMode")) == 0) {
+        this->activeViewMode =
+                static_cast<ViewModeId>(g_ascii_strtoll(reinterpret_cast<const char*>(value), nullptr, 10));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("defaultViewModeAttributes")) == 0) {
+        this->viewModes.at(PresetViewModeIds::VIEW_MODE_DEFAULT) =
+                settingsStringToViewMode(reinterpret_cast<const char*>(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("fullscreenViewModeAttributes")) == 0) {
+        this->viewModes.at(PresetViewModeIds::VIEW_MODE_FULLSCREEN) =
+                settingsStringToViewMode(reinterpret_cast<const char*>(value));
+    } else if (xmlStrcmp(name, reinterpret_cast<const xmlChar*>("presentationViewModeAttributes")) == 0) {
+        this->viewModes.at(PresetViewModeIds::VIEW_MODE_PRESENTATION) =
+                settingsStringToViewMode(reinterpret_cast<const char*>(value));
+    }
+
+    xmlFree(name);
+    xmlFree(value);
+}
+
+auto Settings::loadState() -> bool {
+    if (!fs::exists(stateFilepath)) {
+        migrateStateFromSettings();
+        return true;
+    }
+
+    xmlKeepBlanksDefault(0);
+    xmlDocPtr doc = xmlParseFile(char_cast(stateFilepath.u8string().c_str()));
+
+    if (doc == nullptr) {
+        g_warning("Settings::loadState: doc == null, could not load state!\n");
+        return false;
+    }
+
+    xmlNodePtr cur = xmlDocGetRootElement(doc);
+    if (cur == nullptr) {
+        g_message("The state file \"%s\" is empty", stateFilepath.string().c_str());
+        xmlFreeDoc(doc);
+        return false;
+    }
+
+    if (xmlStrcmp(cur->name, reinterpret_cast<const xmlChar*>("state"))) {
+        g_message("File \"%s\" is of the wrong type", stateFilepath.string().c_str());
+        xmlFreeDoc(doc);
+        return false;
+    }
+
+    cur = cur->xmlChildrenNode;
+    while (cur != nullptr) {
+        if (xmlStrcmp(cur->name, reinterpret_cast<const xmlChar*>("data")) == 0) {
+            xmlChar* name = xmlGetProp(cur, reinterpret_cast<const xmlChar*>("name"));
+            if (name != nullptr) {
+                parseData(cur, getCustomStateElement(reinterpret_cast<const char*>(name)));
+                xmlFree(name);
+            }
+        } else {
+            parseStateItem(doc, cur);
+        }
+        cur = cur->next;
+    }
+
+    xmlFreeDoc(doc);
+    return true;
+}
+
+void Settings::saveState() {
+    if (inTransaction) {
+        return;
+    }
+
+    xmlDocPtr doc = nullptr;
+    xmlNodePtr root = nullptr;
+    xmlNodePtr xmlNode = nullptr;
+    xmlNodePtr com = nullptr;
+
+    xmlIndentTreeOutput = true;
+
+    doc = xmlNewDoc(reinterpret_cast<const xmlChar*>("1.0"));
+    if (doc == nullptr) {
+        return;
+    }
+
+    root = xmlNewDocNode(doc, nullptr, reinterpret_cast<const xmlChar*>("state"), nullptr);
+    xmlDocSetRootElement(doc, root);
+    com = xmlNewComment(reinterpret_cast<const xmlChar*>("The Xournal++ state file. Do not edit this file!"));
+    xmlAddPrevSibling(root, com);
+
+    saveProperty("lastSavePath", char_cast(this->lastSavePath.u8string().c_str()), root);
+    saveProperty("lastOpenPath", char_cast(this->lastOpenPath.u8string().c_str()), root);
+    saveProperty("lastImagePath", char_cast(this->lastImagePath.u8string().c_str()), root);
+
+    SAVE_INT_PROP(mainWndWidth);
+    SAVE_INT_PROP(mainWndHeight);
+    SAVE_BOOL_PROP(maximized);
+
+    SAVE_BOOL_PROP(fullscreenActive);
+    SAVE_BOOL_PROP(showSidebar);
+    SAVE_BOOL_PROP(showToolbar);
+    SAVE_INT_PROP(sidebarWidth);
+    SAVE_BOOL_PROP(menubarVisible);
+    SAVE_BOOL_PROP(presentationMode);
+    SAVE_STRING_PROP(selectedToolbar);
+
+    SAVE_INT_PROP(numColumns);
+    SAVE_INT_PROP(numRows);
+    SAVE_BOOL_PROP(viewFixedRows);
+    SAVE_BOOL_PROP(showPairedPages);
+    SAVE_BOOL_PROP(layoutVertical);
+    SAVE_BOOL_PROP(layoutRightToLeft);
+    SAVE_BOOL_PROP(layoutBottomToTop);
+
+    xmlNode = saveProperty("activeViewMode", static_cast<int>(activeViewMode), root);
+
+    auto defaultViewModeAttributes = viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_DEFAULT));
+    auto fullscreenViewModeAttributes = viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_FULLSCREEN));
+    auto presentationViewModeAttributes =
+            viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_PRESENTATION));
+    SAVE_STRING_PROP(defaultViewModeAttributes);
+    SAVE_STRING_PROP(fullscreenViewModeAttributes);
+    SAVE_STRING_PROP(presentationViewModeAttributes);
+
+    xmlNodePtr xmlFont = nullptr;
+    xmlFont = xmlNewChild(root, nullptr, reinterpret_cast<const xmlChar*>("property"), nullptr);
+    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("name"), reinterpret_cast<const xmlChar*>("font"));
+    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("font"),
+               reinterpret_cast<const xmlChar*>(this->font.getName().c_str()));
+
+    char sSize[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(sSize, G_ASCII_DTOSTR_BUF_SIZE, Util::PRECISION_FORMAT_STRING, this->font.getSize());
+    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("size"), reinterpret_cast<const xmlChar*>(sSize));
+
+    for (std::map<string, SElement>::value_type p: stateData) {
+        saveData(root, p.first, p.second);
+    }
+
+    xmlSaveFormatFileEnc(char_cast(stateFilepath.u8string().c_str()), doc, "UTF-8", 1);
+    xmlFreeDoc(doc);
+}
+
+void Settings::migrateStateFromSettings() {
+    g_message("Migrating state from settings.xml to state.xml");
+
+    // Explicitly migrate known state items from `data` to `stateData` if they exist
+    if (this->data.count("tools")) {
+        this->stateData["tools"] = std::move(this->data["tools"]);
+        this->data.erase("tools");
+    }
+
+    saveState();
+    if (!fs::exists(stateFilepath)) {
+        g_warning("Migration failed: state.xml was not created at %s", stateFilepath.string().c_str());
+    }
+}
+
 void Settings::loadDeviceClasses() {
     SElement& s = getCustomElement("deviceClasses");
     for (auto device: s.children()) {
@@ -876,6 +1116,8 @@ auto Settings::load() -> bool {
     loadButtonConfig();
     loadDeviceClasses();
 
+    loadState();
+
     // This must be done before the color palette to ensure the color names are translated properly
 #ifdef _WIN32
     _putenv_s("LANGUAGE", this->preferredLocale.c_str());
@@ -979,6 +1221,7 @@ void Settings::transactionStart() { inTransaction = true; }
 void Settings::transactionEnd() {
     inTransaction = false;
     save();
+    saveState();
 }
 
 void Settings::save() {
@@ -1015,55 +1258,22 @@ void Settings::save() {
 
     SAVE_BOOL_PROP(zoomGesturesEnabled);
 
-    SAVE_STRING_PROP(selectedToolbar);
-
-    saveProperty("lastSavePath", char_cast(this->lastSavePath.u8string().c_str()), root);
-    saveProperty("lastOpenPath", char_cast(this->lastOpenPath.u8string().c_str()), root);
-    saveProperty("lastImagePath", char_cast(this->lastImagePath.u8string().c_str()), root);
-
     SAVE_DOUBLE_PROP(edgePanSpeed);
     SAVE_DOUBLE_PROP(edgePanMaxMult);
     SAVE_DOUBLE_PROP(zoomStep);
     SAVE_DOUBLE_PROP(zoomStepScroll);
     SAVE_INT_PROP(displayDpi);
-    SAVE_INT_PROP(mainWndWidth);
-    SAVE_INT_PROP(mainWndHeight);
-    SAVE_BOOL_PROP(maximized);
 
-    SAVE_BOOL_PROP(showToolbar);
-
-    SAVE_BOOL_PROP(showSidebar);
-    SAVE_INT_PROP(sidebarWidth);
     xmlNode = saveProperty("sidebarNumberingStyle", static_cast<int>(sidebarNumberingStyle), root);
 
     SAVE_BOOL_PROP(sidebarOnRight);
     SAVE_BOOL_PROP(scrollbarOnLeft);
-    SAVE_BOOL_PROP(menubarVisible);
     SAVE_BOOL_PROP(filepathShownInTitlebar);
     SAVE_BOOL_PROP(pageNumberShownInTitlebar);
-    SAVE_INT_PROP(numColumns);
-    SAVE_INT_PROP(numRows);
-    SAVE_BOOL_PROP(viewFixedRows);
-    SAVE_BOOL_PROP(showPairedPages);
     SAVE_BOOL_PROP(showPageShadow);
-    SAVE_BOOL_PROP(layoutVertical);
-    SAVE_BOOL_PROP(layoutRightToLeft);
-    SAVE_BOOL_PROP(layoutBottomToTop);
     SAVE_INT_PROP(numPairsOffset);
     xmlNode = saveProperty("emptyLastPageAppend", emptyLastPageAppendToString(this->emptyLastPageAppend), root);
     ATTACH_COMMENT("The icon theme, allowed values are \"disabled\", \"onDrawOfLastPage\", and \"onScrollOfLastPage\"");
-    SAVE_BOOL_PROP(presentationMode);
-
-    auto defaultViewModeAttributes = viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_DEFAULT));
-    auto fullscreenViewModeAttributes = viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_FULLSCREEN));
-    auto presentationViewModeAttributes =
-            viewModeToSettingsString(viewModes.at(PresetViewModeIds::VIEW_MODE_PRESENTATION));
-    SAVE_STRING_PROP(defaultViewModeAttributes);
-    ATTACH_COMMENT("Which GUI elements are shown in default view mode, separated by a colon (,)");
-    SAVE_STRING_PROP(fullscreenViewModeAttributes);
-    ATTACH_COMMENT("Which GUI elements are shown in fullscreen view mode, separated by a colon (,)");
-    SAVE_STRING_PROP(presentationViewModeAttributes);
-    ATTACH_COMMENT("Which GUI elements are shown in presentation view mode, separated by a colon (,)");
 
     xmlNode = saveProperty("stylusCursorType", stylusCursorTypeToString(this->stylusCursorType), root);
     ATTACH_COMMENT("The cursor icon used with a stylus, allowed values are \"none\", \"dot\", \"big\", \"arrow\"");
@@ -1232,19 +1442,6 @@ void Settings::save() {
     SAVE_STRING_PROP(latexSettings.externalEditorCmd);
     SAVE_STRING_PROP(latexSettings.temporaryFileExt);
 
-    xmlNodePtr xmlFont = nullptr;
-    xmlFont = xmlNewChild(root, nullptr, reinterpret_cast<const xmlChar*>("property"), nullptr);
-    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("name"), reinterpret_cast<const xmlChar*>("font"));
-    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("font"),
-               reinterpret_cast<const xmlChar*>(this->font.getName().c_str()));
-
-    char sSize[G_ASCII_DTOSTR_BUF_SIZE];
-
-    g_ascii_formatd(sSize, G_ASCII_DTOSTR_BUF_SIZE, Util::PRECISION_FORMAT_STRING,
-                    this->font.getSize());  // no locale
-    xmlSetProp(xmlFont, reinterpret_cast<const xmlChar*>("size"), reinterpret_cast<const xmlChar*>(sSize));
-
-
     for (std::map<string, SElement>::value_type p: data) {
         saveData(root, p.first, p.second);
     }
@@ -1360,7 +1557,7 @@ void Settings::setMenubarVisible(bool visible) {
 
     this->menubarVisible = visible;
 
-    save();
+    saveState();
 }
 
 const bool Settings::isFilepathInTitlebarShown() const { return this->filepathShownInTitlebar; }
@@ -1832,7 +2029,7 @@ void Settings::setPresentationMode(bool presentationMode) {
         this->activeViewMode = PresetViewModeIds::VIEW_MODE_PRESENTATION;
     }
     this->presentationMode = presentationMode;
-    save();
+    saveState();
 }
 
 auto Settings::isPresentationMode() const -> bool {
@@ -1939,14 +2136,14 @@ auto Settings::getViewLayoutB2T() const -> bool { return this->layoutBottomToTop
 
 void Settings::setLastSavePath(fs::path p) {
     this->lastSavePath = std::move(p);
-    save();
+    saveState();
 }
 
 auto Settings::getLastSavePath() const -> fs::path const& { return this->lastSavePath; }
 
 void Settings::setLastOpenPath(fs::path p) {
     this->lastOpenPath = std::move(p);
-    save();
+    saveState();
 }
 
 auto Settings::getLastOpenPath() const -> fs::path const& { return this->lastOpenPath; }
@@ -1956,7 +2153,7 @@ void Settings::setLastImagePath(const fs::path& path) {
         return;
     }
     this->lastImagePath = path;
-    save();
+    saveState();
 }
 
 auto Settings::getLastImagePath() const -> fs::path const& { return this->lastImagePath; }
@@ -2030,7 +2227,7 @@ void Settings::setSidebarVisible(bool visible) {
         return;
     }
     this->showSidebar = visible;
-    save();
+    saveState();
 }
 
 auto Settings::isToolbarVisible() const -> bool { return this->showToolbar; }
@@ -2040,7 +2237,7 @@ void Settings::setToolbarVisible(bool visible) {
         return;
     }
     this->showToolbar = visible;
-    save();
+    saveState();
 }
 
 auto Settings::getSidebarWidth() const -> int { return this->sidebarWidth; }
@@ -2052,14 +2249,14 @@ void Settings::setSidebarWidth(int width) {
         return;
     }
     this->sidebarWidth = width;
-    save();
+    saveState();
 }
 
 void Settings::setMainWndSize(int width, int height) {
     this->mainWndWidth = width;
     this->mainWndHeight = height;
 
-    save();
+    saveState();
 }
 
 auto Settings::getMainWndWidth() const -> int { return this->mainWndWidth; }
@@ -2073,7 +2270,7 @@ void Settings::setMainWndMaximized(bool max) {
         return;
     }
     this->maximized = max;
-    save();
+    saveState();
 }
 
 void Settings::setSelectedToolbar(const string& name) {
@@ -2081,12 +2278,13 @@ void Settings::setSelectedToolbar(const string& name) {
         return;
     }
     this->selectedToolbar = name;
-    save();
+    saveState();
 }
 
 auto Settings::getSelectedToolbar() const -> string const& { return this->selectedToolbar; }
 
-auto Settings::getCustomElement(const string& name) -> SElement& { return this->data[name]; }
+auto Settings::getCustomElement(const std::string& name) -> SElement& { return this->data[name]; }
+auto Settings::getCustomStateElement(const std::string& name) -> SElement& { return this->stateData[name]; }
 
 void Settings::customSettingsChanged() { save(); }
 
@@ -2103,7 +2301,7 @@ void Settings::setViewMode(ViewModeId mode, ViewMode viewMode) {
         return;
     }
     this->viewModes.at(mode) = viewMode;
-    save();
+    saveState();
 }
 
 auto Settings::getTouchZoomStartThreshold() const -> double { return this->touchZoomStartThreshold; }
@@ -2221,7 +2419,7 @@ auto Settings::getFont() -> XojFont& { return this->font; }
 
 void Settings::setFont(const XojFont& font) {
     this->font = font;
-    save();
+    saveState();
 }
 
 #ifdef ENABLE_AUDIO
